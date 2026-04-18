@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright (c) 2026 DGOne. All Rights Reserved.
 
 #include "TraversalMotionWarpCharacterAdapter.h"
 #include "GameFramework/Character.h"

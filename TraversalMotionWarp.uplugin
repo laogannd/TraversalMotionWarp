@@ -3,15 +3,16 @@
 	"Version": 1,
 	"VersionName": "0.1",
 	"FriendlyName": "Traversal Motion Warp",
-	"Description": "Fork of Motion Warping as a separate module for coexistence with engine MotionWarping.",
+	"Description": "Fork of Motion Warping as a separate module for coexistence with engine MotionWarping. Requires Unreal Engine 5.4 or newer. Depends only on built-in engine modules (Core, CoreUObject, Engine, NetCore; editor builds also use UnrealEd and AnimGraph). No additional Fab or Marketplace plugins are required.",
 	"Category": "Animation",
-	"CreatedBy": "Epic Games, Inc.",
-	"CreatedByURL": "https://epicgames.com",
+	"CreatedBy": "DGOne",
+	"CreatedByURL": "",
 	"DocsURL": "",
-	"MarketplaceURL": "",
+	"MarketplaceURL": "https://www.fab.com/listings/REPLACE_WITH_YOUR_LISTING_ID",
 	"SupportURL": "",
+	"EngineVersion": "5.4",
 	"EnabledByDefault": false,
-	"CanContainContent": true,
+	"CanContainContent": false,
 	"IsBetaVersion": true,
 	"IsExperimentalVersion": false,
 	"Installed": false,
@@ -19,7 +20,14 @@
 		{
 			"Name": "TraversalMotionWarp",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux",
+				"Android",
+				"IOS"
+			]
 		}
 	]
 }

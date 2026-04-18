@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright (c) 2026 DGOne. All Rights Reserved.
 #include "TraversalMotionWarpFunctionLibrary.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TraversalMotionWarpFunctionLibrary)
