@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.1",
+	"VersionName": "1.0.0",
 	"FriendlyName": "Traversal Motion Warp",
 	"Description": "Fork of Motion Warping as a separate module for coexistence with engine MotionWarping. Requires Unreal Engine 5.4 or newer. Depends only on built-in engine modules (Core, CoreUObject, Engine, NetCore; editor builds also use UnrealEd and AnimGraph). No additional Fab or Marketplace plugins are required.",
 	"Category": "Animation",
