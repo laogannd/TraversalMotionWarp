@@ -25,6 +25,8 @@ public:
 	UE_API virtual FVector GetBaseVisualTranslationOffset() const override;
 	UE_API virtual FQuat GetBaseVisualRotationOffset() const override;
 
+	UE_API virtual bool TeleportTo(const FVector& NewFeetLocation, const FQuat& NewRotation, bool bSweep = false) override;
+
 private:
 	// Triggered when the character says it's time to pre-process local root motion. This adapter catches the request and passes along to the Warping component
 	FTransform WarpLocalRootMotionOnCharacter(const FTransform& LocalRootMotionTransform, UCharacterMovementComponent* TargetMoveComp, float DeltaSeconds);

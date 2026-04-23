@@ -395,6 +395,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config", meta = (EditCondition = "RotationMethod!=ETraversalMotionWarpRotationMethod::Slerp && bWarpRotation"))
 	float WarpMaxRotationRate = 0.f;
 
+	/** Whether to snap the character to the expected warp start position when the modifier activates.
+	 *  The expected start position is calculated by subtracting the animation's total root motion
+	 *  from the warp target location. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment")
+	bool bEnablePreWarpAlignment = false;
+
+	/** Maximum distance between the character's actual position and the expected warp start position.
+	 *  If exceeded, the warp is cancelled (modifier disabled). Set to 0 to always snap regardless of distance. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment", ClampMin = "0.0"))
+	float PreWarpAlignmentMaxDistance = 100.f;
+
+	/** Whether to also snap the character's rotation to face the warp target when aligning. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment"))
+	bool bAlignRotationToTarget = false;
+
+	/** Whether to use a sweep test when snapping to avoid teleporting into geometry.
+	 *  If the sweep hits something, the snap is cancelled and the modifier is disabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment"))
+	bool bSweepOnSnap = true;
+
 	UE_API UTraversalRootMotionModifier_Warp(const FObjectInitializer& ObjectInitializer);
 
 	//~ Begin FRootMotionModifier Interface
@@ -432,6 +452,10 @@ protected:
 	
 	bool bWarpingPaused = false;
 	bool bRootMotionPaused = false;
+
+	/** Attempts to snap the character to the expected warp start position.
+	 *  Returns true if alignment succeeded, false if it should be cancelled. */
+	bool PerformPreWarpAlignment();
 };
 
 // UTraversalRootMotionModifier_SimpleWarp. 

@@ -411,12 +411,110 @@ void UTraversalRootMotionModifier_Warp::OnTargetTransformChanged()
 
 void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModifierState LastState)
 {
+	// Pre-warp alignment: snap character to expected start position BEFORE
+	// Super captures StartTransform
+	if (bEnablePreWarpAlignment &&
+		LastState != ETraversalRootMotionModifierState::Active &&
+		GetState() == ETraversalRootMotionModifierState::Active)
+	{
+		if (!PerformPreWarpAlignment())
+		{
+			UE_LOG(LogTraversalMotionWarp, Warning,
+				TEXT("MotionWarping: Pre-warp alignment failed. Disabling modifier. Animation: %s WarpTarget: %s"),
+				*GetNameSafe(Animation.Get()), *WarpTargetName.ToString());
+			SetState(ETraversalRootMotionModifierState::Disabled);
+			return;
+		}
+	}
+
 	Super::OnStateChanged(LastState);
 
 	if (bSubtractRemainingRootMotion)
 	{
 		RootMotionRemainingAfterNotify = UTraversalMotionWarpUtilities::ExtractRootMotionFromAnimation(Animation.Get(), EndTime, Animation.Get()->GetPlayLength());
 	}
+}
+
+bool UTraversalRootMotionModifier_Warp::PerformPreWarpAlignment()
+{
+	UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter();
+	const UTraversalMotionWarpComponent* OwnerComp = GetOwnerComponent();
+	if (!OwnerAdapter || !OwnerComp)
+	{
+		return false;
+	}
+
+	const FTraversalMotionWarpTarget* WarpTargetPtr = OwnerComp->FindWarpTarget(WarpTargetName);
+	if (!WarpTargetPtr)
+	{
+		// No target yet — let the normal flow handle it
+		return true;
+	}
+
+	const FVector TargetLocation = WarpTargetPtr->GetTargetTrasform().GetLocation();
+
+	// Total root motion the animation will produce during the warp window
+	const FTransform TotalRootMotion = UTraversalMotionWarpUtilities::ExtractRootMotionFromAnimation(
+		Animation.Get(), StartTime, EndTime);
+
+	// Transform root motion from mesh-local space to world space
+	const FQuat CurrentRotation = OwnerAdapter->GetActor()->GetActorQuat();
+	const FQuat MeshRotationOffset = OwnerAdapter->GetBaseVisualRotationOffset();
+	const FVector MeshTranslationOffset = OwnerAdapter->GetBaseVisualTranslationOffset();
+	const FTransform MeshRelativeTransform = FTransform(MeshRotationOffset, MeshTranslationOffset);
+	const FTransform ActorTransform = OwnerAdapter->GetActor()->GetActorTransform();
+	const FTransform MeshTransform = MeshRelativeTransform * ActorTransform;
+
+	const FVector TotalRootMotionWorld = MeshTransform.TransformVector(TotalRootMotion.GetTranslation());
+
+	// Expected start = target minus the root motion that will be applied
+	FVector ExpectedStartLocation = TargetLocation - TotalRootMotionWorld;
+
+	const FVector CurrentLocation = OwnerAdapter->GetVisualRootLocation();
+
+	FVector Delta = ExpectedStartLocation - CurrentLocation;
+	if (bIgnoreZAxis)
+	{
+		Delta.Z = 0.f;
+		ExpectedStartLocation.Z = CurrentLocation.Z;
+	}
+
+	const float Distance = Delta.Size();
+
+	// Check distance threshold (0 means no limit)
+	if (PreWarpAlignmentMaxDistance > 0.f && Distance > PreWarpAlignmentMaxDistance)
+	{
+		UE_LOG(LogTraversalMotionWarp, Warning,
+			TEXT("MotionWarping: PreWarpAlignment distance %.1f exceeds max %.1f. Cancelling warp."),
+			Distance, PreWarpAlignmentMaxDistance);
+		return false;
+	}
+
+	// Already close enough
+	if (Distance < 1.0f)
+	{
+		return true;
+	}
+
+	// Calculate snap rotation
+	FQuat SnapRotation = CurrentRotation;
+	if (bAlignRotationToTarget)
+	{
+		const FVector DirectionToTarget = (TargetLocation - ExpectedStartLocation).GetSafeNormal2D();
+		if (!DirectionToTarget.IsNearlyZero())
+		{
+			SnapRotation = FRotationMatrix::MakeFromXZ(DirectionToTarget, FVector::UpVector).ToQuat();
+		}
+	}
+
+	const bool bSuccess = OwnerAdapter->TeleportTo(ExpectedStartLocation, SnapRotation, bSweepOnSnap);
+
+	UE_LOG(LogTraversalMotionWarp, Verbose,
+		TEXT("MotionWarping: PreWarpAlignment %s. Distance: %.1f Target: %s ExpectedStart: %s"),
+		bSuccess ? TEXT("succeeded") : TEXT("FAILED (sweep blocked)"),
+		Distance, *TargetLocation.ToString(), *ExpectedStartLocation.ToString());
+
+	return bSuccess;
 }
 
 FQuat UTraversalRootMotionModifier_Warp::GetTargetRotation() const

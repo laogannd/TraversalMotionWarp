@@ -65,12 +65,34 @@ FVector UTraversalMotionWarpCharacterAdapter::GetBaseVisualTranslationOffset() c
 }
 
 FQuat UTraversalMotionWarpCharacterAdapter::GetBaseVisualRotationOffset() const
-{ 
+{
 	if (const ACharacter* RawTargetCharacter = TargetCharacter.Get())
 	{
 		return RawTargetCharacter->GetBaseRotationOffset();
 	}
 	return FQuat::Identity;
+}
+
+bool UTraversalMotionWarpCharacterAdapter::TeleportTo(const FVector& NewFeetLocation, const FQuat& NewRotation, bool bSweep)
+{
+	ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	if (!RawTargetCharacter)
+	{
+		return false;
+	}
+
+	// Convert feet location back to actor location (add capsule half height along up vector)
+	const float HalfHeight = RawTargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	const FVector ActorLocation = NewFeetLocation + NewRotation.GetUpVector() * HalfHeight;
+
+	if (bSweep)
+	{
+		FHitResult HitResult;
+		RawTargetCharacter->SetActorLocationAndRotation(ActorLocation, NewRotation, true, &HitResult);
+		return !HitResult.bBlockingHit;
+	}
+
+	return RawTargetCharacter->TeleportTo(ActorLocation, NewRotation.Rotator(), false, true);
 }
 
 FTransform UTraversalMotionWarpCharacterAdapter::WarpLocalRootMotionOnCharacter(const FTransform& LocalRootMotionTransform, UCharacterMovementComponent* TargetMoveComp, float DeltaSeconds)

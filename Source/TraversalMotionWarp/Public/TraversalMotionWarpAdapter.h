@@ -25,6 +25,10 @@ public:
 	virtual FVector GetBaseVisualTranslationOffset() const { return FVector::ZeroVector; }
 	virtual FQuat GetBaseVisualRotationOffset() const { return FQuat::Identity; }
 
+	/** Teleport the actor to a new feet location. Returns true if successful.
+	 *  If bSweep is true, performs a sweep test and returns false if blocked. */
+	virtual bool TeleportTo(const FVector& NewFeetLocation, const FQuat& NewRotation, bool bSweep = false) { return false; }
+
 	// A MotionWarpingComponent will bind to this delegate to perform warping when it is triggered
 	FTraversalOnWarpLocalspaceRootMotionWithContext WarpLocalRootMotionDelegate;
 };
