@@ -332,6 +332,31 @@ UTraversalRootMotionModifier_Warp::UTraversalRootMotionModifier_Warp(const FObje
 
 void UTraversalRootMotionModifier_Warp::Update(const FTraversalMotionWarpUpdateContext& Context)
 {
+	// Handle PreAligning state: smoothly move character to expected start position
+	if (GetState() == ETraversalRootMotionModifierState::PreAligning)
+	{
+		// Still update playback times so we track animation progress
+		PreviousPosition = Context.PreviousPosition;
+		CurrentPosition = Context.CurrentPosition;
+		Weight = Context.Weight;
+		PlayRate = Context.PlayRate;
+
+		// Cancel if animation passed the warp window while we were aligning
+		if (PreviousPosition >= EndTime)
+		{
+			UE_LOG(LogTraversalMotionWarp, Verbose, TEXT("MotionWarping: PreAligning cancelled — warp window ended."));
+			SetState(ETraversalRootMotionModifierState::MarkedForRemoval);
+			return;
+		}
+
+		if (UpdatePreWarpAlignment(Context.DeltaSeconds))
+		{
+			// Alignment complete — transition to Active
+			SetState(ETraversalRootMotionModifierState::Active);
+		}
+		return;
+	}
+
 	// Update playback times and state
 	Super::Update(Context);
 
@@ -411,13 +436,13 @@ void UTraversalRootMotionModifier_Warp::OnTargetTransformChanged()
 
 void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModifierState LastState)
 {
-	// Pre-warp alignment: snap character to expected start position BEFORE
-	// Super captures StartTransform
+	// When transitioning Waiting → Active with pre-warp alignment enabled,
+	// intercept and go to PreAligning first
 	if (bEnablePreWarpAlignment &&
-		LastState != ETraversalRootMotionModifierState::Active &&
+		LastState == ETraversalRootMotionModifierState::Waiting &&
 		GetState() == ETraversalRootMotionModifierState::Active)
 	{
-		if (!PerformPreWarpAlignment())
+		if (!BeginPreWarpAlignment())
 		{
 			UE_LOG(LogTraversalMotionWarp, Warning,
 				TEXT("MotionWarping: Pre-warp alignment failed. Disabling modifier. Animation: %s WarpTarget: %s"),
@@ -425,17 +450,43 @@ void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModif
 			SetState(ETraversalRootMotionModifierState::Disabled);
 			return;
 		}
+
+		// If BeginPreWarpAlignment set us to PreAligning, we're in smooth interp mode.
+		// The transition to Active will happen later from UpdatePreWarpAlignment.
+		if (GetState() == ETraversalRootMotionModifierState::PreAligning)
+		{
+			return;
+		}
+
+		// Otherwise (instant teleport or no movement needed), we're still Active.
+		// Fall through to capture StartTransform normally.
+	}
+
+	// When transitioning PreAligning → Active, capture StartTransform normally
+	if (LastState == ETraversalRootMotionModifierState::PreAligning &&
+		GetState() == ETraversalRootMotionModifierState::Active)
+	{
+		// Character is now at the correct position — let Super capture StartTransform
+		// Pass Waiting as LastState so the base class treats this as a fresh activation
+		Super::OnStateChanged(ETraversalRootMotionModifierState::Waiting);
+
+		if (bSubtractRemainingRootMotion)
+		{
+			RootMotionRemainingAfterNotify = UTraversalMotionWarpUtilities::ExtractRootMotionFromAnimation(Animation.Get(), EndTime, Animation.Get()->GetPlayLength());
+		}
+		return;
 	}
 
 	Super::OnStateChanged(LastState);
 
-	if (bSubtractRemainingRootMotion)
+	if (bSubtractRemainingRootMotion && LastState != ETraversalRootMotionModifierState::Active &&
+		GetState() == ETraversalRootMotionModifierState::Active)
 	{
 		RootMotionRemainingAfterNotify = UTraversalMotionWarpUtilities::ExtractRootMotionFromAnimation(Animation.Get(), EndTime, Animation.Get()->GetPlayLength());
 	}
 }
 
-bool UTraversalRootMotionModifier_Warp::PerformPreWarpAlignment()
+bool UTraversalRootMotionModifier_Warp::BeginPreWarpAlignment()
 {
 	UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter();
 	const UTraversalMotionWarpComponent* OwnerComp = GetOwnerComponent();
@@ -447,7 +498,7 @@ bool UTraversalRootMotionModifier_Warp::PerformPreWarpAlignment()
 	const FTraversalMotionWarpTarget* WarpTargetPtr = OwnerComp->FindWarpTarget(WarpTargetName);
 	if (!WarpTargetPtr)
 	{
-		// No target yet — let the normal flow handle it
+		// No target yet — skip alignment, let normal flow handle it
 		return true;
 	}
 
@@ -490,31 +541,74 @@ bool UTraversalRootMotionModifier_Warp::PerformPreWarpAlignment()
 		return false;
 	}
 
-	// Already close enough
-	if (Distance < 1.0f)
-	{
-		return true;
-	}
-
-	// Calculate snap rotation
-	FQuat SnapRotation = CurrentRotation;
+	// Calculate target rotation
+	FQuat DesiredRotation = CurrentRotation;
 	if (bAlignRotationToTarget)
 	{
 		const FVector DirectionToTarget = (TargetLocation - ExpectedStartLocation).GetSafeNormal2D();
 		if (!DirectionToTarget.IsNearlyZero())
 		{
-			SnapRotation = FRotationMatrix::MakeFromXZ(DirectionToTarget, FVector::UpVector).ToQuat();
+			DesiredRotation = FRotationMatrix::MakeFromXZ(DirectionToTarget, FVector::UpVector).ToQuat();
 		}
 	}
 
-	const bool bSuccess = OwnerAdapter->TeleportTo(ExpectedStartLocation, SnapRotation, bSweepOnSnap);
+	// If already close enough, no alignment needed — stay in Active
+	if (Distance < 1.0f)
+	{
+		return true;
+	}
+
+	// If duration is 0, do instant teleport
+	if (PreWarpAlignmentDuration <= 0.f)
+	{
+		const bool bSuccess = OwnerAdapter->TeleportTo(ExpectedStartLocation, DesiredRotation, false);
+		UE_LOG(LogTraversalMotionWarp, Verbose,
+			TEXT("MotionWarping: Instant PreWarpAlignment %s. Distance: %.1f"),
+			bSuccess ? TEXT("succeeded") : TEXT("FAILED"), Distance);
+		return bSuccess;
+	}
+
+	// Start smooth interpolation — transition to PreAligning state
+	PreAlignStartLocation = CurrentLocation;
+	PreAlignTargetLocation = ExpectedStartLocation;
+	PreAlignStartRotation = CurrentRotation;
+	PreAlignTargetRotation = DesiredRotation;
+	PreAlignElapsedTime = 0.f;
+	PreAlignTotalDuration = PreWarpAlignmentDuration;
 
 	UE_LOG(LogTraversalMotionWarp, Verbose,
-		TEXT("MotionWarping: PreWarpAlignment %s. Distance: %.1f Target: %s ExpectedStart: %s"),
-		bSuccess ? TEXT("succeeded") : TEXT("FAILED (sweep blocked)"),
-		Distance, *TargetLocation.ToString(), *ExpectedStartLocation.ToString());
+		TEXT("MotionWarping: Beginning smooth PreWarpAlignment. Distance: %.1f Duration: %.2fs From: %s To: %s"),
+		Distance, PreAlignTotalDuration, *CurrentLocation.ToString(), *ExpectedStartLocation.ToString());
 
-	return bSuccess;
+	// Override the state to PreAligning (we're currently being called from OnStateChanged
+	// which set us to Active — we need to go to PreAligning instead)
+	SetState(ETraversalRootMotionModifierState::PreAligning);
+
+	return true;
+}
+
+bool UTraversalRootMotionModifier_Warp::UpdatePreWarpAlignment(float DeltaSeconds)
+{
+	UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter();
+	if (!OwnerAdapter)
+	{
+		SetState(ETraversalRootMotionModifierState::Disabled);
+		return false;
+	}
+
+	PreAlignElapsedTime += DeltaSeconds;
+	const float Alpha = FMath::Clamp(PreAlignElapsedTime / PreAlignTotalDuration, 0.f, 1.f);
+
+	// Smooth step for natural-feeling movement (ease in/out)
+	const float SmoothedAlpha = FMath::SmoothStep(0.f, 1.f, Alpha);
+
+	const FVector NewLocation = FMath::Lerp(PreAlignStartLocation, PreAlignTargetLocation, SmoothedAlpha);
+	const FQuat NewRotation = FQuat::Slerp(PreAlignStartRotation, PreAlignTargetRotation, SmoothedAlpha);
+
+	OwnerAdapter->TeleportTo(NewLocation, NewRotation, false);
+
+	// Check if alignment is complete
+	return Alpha >= 1.0f;
 }
 
 FQuat UTraversalRootMotionModifier_Warp::GetTargetRotation() const

@@ -50,6 +50,9 @@ enum class ETraversalRootMotionModifierState : uint8
 	/** The modifier is waiting for the animation to hit the warping window */
 	Waiting,
 
+	/** The modifier is smoothly moving the character to the expected warp start position */
+	PreAligning,
+
 	/** The modifier is active and currently affecting the final root motion */
 	Active,
 
@@ -369,7 +372,7 @@ public:
 	 * When enabled, the output root motion will have identity rotation, giving full rotation control to the player/physics.
 	 * Useful when Allow Physics Rotation During Anim Root Motion is enabled and you want to prevent any rotation interference from the animation. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config")
-	bool bIgnoreRootMotionRotation = false;
+	bool bIgnoreRootMotionRotation = true;
 
 	/** Whether rotation should be warp to match the rotation of the sync point or to face the sync point */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config", meta = (EditCondition = "bWarpRotation"))
@@ -395,25 +398,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config", meta = (EditCondition = "RotationMethod!=ETraversalMotionWarpRotationMethod::Slerp && bWarpRotation"))
 	float WarpMaxRotationRate = 0.f;
 
-	/** Whether to snap the character to the expected warp start position when the modifier activates.
+	/** Whether to smoothly move the character to the expected warp start position before warping begins.
 	 *  The expected start position is calculated by subtracting the animation's total root motion
 	 *  from the warp target location. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment")
 	bool bEnablePreWarpAlignment = false;
 
 	/** Maximum distance between the character's actual position and the expected warp start position.
-	 *  If exceeded, the warp is cancelled (modifier disabled). Set to 0 to always snap regardless of distance. */
+	 *  If exceeded, the warp is cancelled (modifier disabled). Set to 0 to always align regardless of distance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment", ClampMin = "0.0"))
-	float PreWarpAlignmentMaxDistance = 100.f;
+	float PreWarpAlignmentMaxDistance = 200.f;
 
-	/** Whether to also snap the character's rotation to face the warp target when aligning. */
+	/** Duration in seconds for the smooth movement to the warp start position.
+	 *  Set to 0 for instant teleport. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment", ClampMin = "0.0"))
+	float PreWarpAlignmentDuration = 0.15f;
+
+	/** Whether to also smoothly align the character's rotation to face the warp target. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment"))
 	bool bAlignRotationToTarget = false;
-
-	/** Whether to use a sweep test when snapping to avoid teleporting into geometry.
-	 *  If the sweep hits something, the snap is cancelled and the modifier is disabled. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment"))
-	bool bSweepOnSnap = true;
 
 	UE_API UTraversalRootMotionModifier_Warp(const FObjectInitializer& ObjectInitializer);
 
@@ -453,9 +456,21 @@ protected:
 	bool bWarpingPaused = false;
 	bool bRootMotionPaused = false;
 
-	/** Attempts to snap the character to the expected warp start position.
-	 *  Returns true if alignment succeeded, false if it should be cancelled. */
-	bool PerformPreWarpAlignment();
+	/** Calculates the expected warp start position and begins the PreAligning phase.
+	 *  Returns false if alignment should be cancelled (e.g. distance too far). */
+	bool BeginPreWarpAlignment();
+
+	/** Per-frame update during PreAligning state. Moves the character toward the target.
+	 *  Returns true when alignment is complete and the modifier should transition to Active. */
+	bool UpdatePreWarpAlignment(float DeltaSeconds);
+
+	// Pre-warp alignment runtime state
+	FVector PreAlignStartLocation = FVector::ZeroVector;
+	FVector PreAlignTargetLocation = FVector::ZeroVector;
+	FQuat PreAlignStartRotation = FQuat::Identity;
+	FQuat PreAlignTargetRotation = FQuat::Identity;
+	float PreAlignElapsedTime = 0.f;
+	float PreAlignTotalDuration = 0.f;
 };
 
 // UTraversalRootMotionModifier_SimpleWarp. 
