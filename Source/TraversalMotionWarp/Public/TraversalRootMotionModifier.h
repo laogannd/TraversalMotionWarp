@@ -418,6 +418,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Pre-Warp Alignment", meta = (EditCondition = "bEnablePreWarpAlignment"))
 	bool bAlignRotationToTarget = false;
 
+	/** Whether to validate the warp path with a capsule sweep before activating.
+	 *  If the sweep detects a blocking collision (e.g. a wall), the warp is cancelled.
+	 *  This prevents root motion from pushing the character through geometry. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Collision")
+	bool bValidateWarpPath = true;
+
+	/** Whether to re-validate the warp path every frame while the modifier is active.
+	 *  When enabled, the capsule sweep and target overlap test run continuously during warping.
+	 *  If the path becomes blocked mid-warp (e.g. dynamic obstacle), the warp is cancelled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Collision", meta = (EditCondition = "bValidateWarpPath"))
+	bool bContinuousWarpPathValidation = false;
+
+	/** Minimum distance between the character and the warp target required to activate warping.
+	 *  If the character is closer than this threshold when the warp window begins, the warp is cancelled.
+	 *  Set to 0 to disable this check. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Collision", meta = (ClampMin = "0.0"))
+	float MinWarpDistance = 0.f;
+
 	UE_API UTraversalRootMotionModifier_Warp(const FObjectInitializer& ObjectInitializer);
 
 	//~ Begin FRootMotionModifier Interface
@@ -456,6 +474,10 @@ protected:
 	bool bWarpingPaused = false;
 	bool bRootMotionPaused = false;
 
+	/** Whether the warp path has been validated with a real target present.
+	 *  Reset on state change; used to defer validation when the target isn't available yet. */
+	bool bWarpPathValidated = false;
+
 	/** Calculates the expected warp start position and begins the PreAligning phase.
 	 *  Returns false if alignment should be cancelled (e.g. distance too far). */
 	bool BeginPreWarpAlignment();
@@ -463,6 +485,10 @@ protected:
 	/** Per-frame update during PreAligning state. Moves the character toward the target.
 	 *  Returns true when alignment is complete and the modifier should transition to Active. */
 	bool UpdatePreWarpAlignment(float DeltaSeconds);
+
+	/** Sweeps the character's capsule along the warp path to check for blocking collisions.
+	 *  Returns true if the path is clear. Sets bWarpPathValidated on success with a real target. */
+	bool ValidateWarpPath();
 
 	// Pre-warp alignment runtime state
 	FVector PreAlignStartLocation = FVector::ZeroVector;

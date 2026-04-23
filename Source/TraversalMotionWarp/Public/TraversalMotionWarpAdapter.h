@@ -29,6 +29,18 @@ public:
 	 *  If bSweep is true, performs a sweep test and returns false if blocked. */
 	virtual bool TeleportTo(const FVector& NewFeetLocation, const FQuat& NewRotation, bool bSweep = false) { return false; }
 
+	/** Sweep the actor's collision shape from Start to End (feet locations).
+	 *  Returns true if the path is clear (no blocking hit). */
+	virtual bool SweepTestMovePath(const FVector& StartFeetLocation, const FVector& EndFeetLocation, FHitResult& OutHit) const { return true; }
+
+	/** Sweep with a uniformly shrunk collision shape. ShrinkFactor 0.0 = full size, 1.0 = zero size.
+	 *  Returns true if the path is clear (no blocking hit). */
+	virtual bool SweepTestMovePathShrunk(const FVector& StartFeetLocation, const FVector& EndFeetLocation, float ShrinkFactor, FHitResult& OutHit) const { return SweepTestMovePath(StartFeetLocation, EndFeetLocation, OutHit); }
+
+	/** Test whether the actor's collision shape overlaps any blocking geometry at the given feet location.
+	 *  Returns true if the location is clear (no overlap). */
+	virtual bool OverlapTestAtLocation(const FVector& FeetLocation) const { return true; }
+
 	// A MotionWarpingComponent will bind to this delegate to perform warping when it is triggered
 	FTraversalOnWarpLocalspaceRootMotionWithContext WarpLocalRootMotionDelegate;
 };

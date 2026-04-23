@@ -106,6 +106,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config")
 	bool bSearchForWindowsInAnimsWithinMontages;
 
+	/** Whether to sweep-test the warped root motion delta each frame and clamp it on collision.
+	 *  This prevents the character from being pushed through thin walls or geometry by warped motion.
+	 *  When a blocking hit is detected, the translation is shortened to stop at the impact point. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Collision")
+	bool bClampWarpedMotionToCollision = false;
+
+	/** How much to shrink the collision shape when sweep-testing warped motion (0.0 = full size, 1.0 = zero size).
+	 *  Higher values allow the character to get closer to walls before clamping kicks in.
+	 *  For example, 0.2 shrinks the capsule radius/half-height by 20%, giving ~20% tolerance. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config|Collision", meta = (EditCondition = "bClampWarpedMotionToCollision", ClampMin = "0.0", ClampMax = "0.95", UIMin = "0.0", UIMax = "0.5"))
+	float CollisionClampShrinkFactor = 0.f;
+
 	/** Event called before Root Motion Modifiers are updated */
 	UPROPERTY(BlueprintAssignable, Category = "Motion Warping")
 	FTraversalMotionWarpPreUpdate OnPreUpdate;

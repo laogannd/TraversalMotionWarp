@@ -95,6 +95,130 @@ bool UTraversalMotionWarpCharacterAdapter::TeleportTo(const FVector& NewFeetLoca
 	return RawTargetCharacter->TeleportTo(ActorLocation, NewRotation.Rotator(), false, true);
 }
 
+bool UTraversalMotionWarpCharacterAdapter::SweepTestMovePath(const FVector& StartFeetLocation, const FVector& EndFeetLocation, FHitResult& OutHit) const
+{
+	const ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	if (!RawTargetCharacter)
+	{
+		return true;
+	}
+
+	const UCapsuleComponent* Capsule = RawTargetCharacter->GetCapsuleComponent();
+	if (!Capsule)
+	{
+		return true;
+	}
+
+	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+	const float Radius = Capsule->GetScaledCapsuleRadius();
+	const FQuat ActorQuat = RawTargetCharacter->GetActorQuat();
+
+	// Convert feet locations to capsule center locations
+	const FVector StartCenter = StartFeetLocation + ActorQuat.GetUpVector() * HalfHeight;
+	const FVector EndCenter = EndFeetLocation + ActorQuat.GetUpVector() * HalfHeight;
+
+	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
+
+	// Use the character's collision channel and profile
+	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WarpPathSweep), false, RawTargetCharacter);
+	const FCollisionResponseParams ResponseParams(Capsule->GetCollisionResponseToChannels());
+
+	const bool bHit = RawTargetCharacter->GetWorld()->SweepSingleByChannel(
+		OutHit,
+		StartCenter,
+		EndCenter,
+		ActorQuat,
+		Capsule->GetCollisionObjectType(),
+		CapsuleShape,
+		QueryParams,
+		ResponseParams
+	);
+
+	return !bHit;
+}
+
+bool UTraversalMotionWarpCharacterAdapter::SweepTestMovePathShrunk(const FVector& StartFeetLocation, const FVector& EndFeetLocation, float ShrinkFactor, FHitResult& OutHit) const
+{
+	if (ShrinkFactor <= 0.f)
+	{
+		return SweepTestMovePath(StartFeetLocation, EndFeetLocation, OutHit);
+	}
+
+	const ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	if (!RawTargetCharacter)
+	{
+		return true;
+	}
+
+	const UCapsuleComponent* Capsule = RawTargetCharacter->GetCapsuleComponent();
+	if (!Capsule)
+	{
+		return true;
+	}
+
+	const float Scale = FMath::Clamp(1.f - ShrinkFactor, 0.05f, 1.f);
+	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight() * Scale;
+	const float Radius = Capsule->GetScaledCapsuleRadius() * Scale;
+	const FQuat ActorQuat = RawTargetCharacter->GetActorQuat();
+
+	const FVector StartCenter = StartFeetLocation + ActorQuat.GetUpVector() * Capsule->GetScaledCapsuleHalfHeight();
+	const FVector EndCenter = EndFeetLocation + ActorQuat.GetUpVector() * Capsule->GetScaledCapsuleHalfHeight();
+
+	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
+	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WarpPathSweepShrunk), false, RawTargetCharacter);
+	const FCollisionResponseParams ResponseParams(Capsule->GetCollisionResponseToChannels());
+
+	const bool bHit = RawTargetCharacter->GetWorld()->SweepSingleByChannel(
+		OutHit,
+		StartCenter,
+		EndCenter,
+		ActorQuat,
+		Capsule->GetCollisionObjectType(),
+		CapsuleShape,
+		QueryParams,
+		ResponseParams
+	);
+
+	return !bHit;
+}
+
+bool UTraversalMotionWarpCharacterAdapter::OverlapTestAtLocation(const FVector& FeetLocation) const
+{
+	const ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	if (!RawTargetCharacter)
+	{
+		return true;
+	}
+
+	const UCapsuleComponent* Capsule = RawTargetCharacter->GetCapsuleComponent();
+	if (!Capsule)
+	{
+		return true;
+	}
+
+	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+	const float Radius = Capsule->GetScaledCapsuleRadius();
+	const FQuat ActorQuat = RawTargetCharacter->GetActorQuat();
+
+	// Convert feet location to capsule center
+	const FVector CenterLocation = FeetLocation + ActorQuat.GetUpVector() * HalfHeight;
+
+	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
+	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WarpTargetOverlap), false, RawTargetCharacter);
+	const FCollisionResponseParams ResponseParams(Capsule->GetCollisionResponseToChannels());
+
+	const bool bOverlap = RawTargetCharacter->GetWorld()->OverlapBlockingTestByChannel(
+		CenterLocation,
+		ActorQuat,
+		Capsule->GetCollisionObjectType(),
+		CapsuleShape,
+		QueryParams,
+		ResponseParams
+	);
+
+	return !bOverlap;
+}
+
 FTransform UTraversalMotionWarpCharacterAdapter::WarpLocalRootMotionOnCharacter(const FTransform& LocalRootMotionTransform, UCharacterMovementComponent* TargetMoveComp, float DeltaSeconds)
 {
 	const ACharacter* RawTargetCharacter = TargetCharacter.Get();

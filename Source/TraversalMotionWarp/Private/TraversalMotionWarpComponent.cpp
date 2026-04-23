@@ -566,6 +566,35 @@ FTransform UTraversalMotionWarpComponent::ProcessRootMotionPreConvertToWorld(con
 		}
 	}
 
+	// Sweep-clamp the warped motion delta against collision geometry
+	if (bClampWarpedMotionToCollision && OwnerAdapter && !FinalRootMotion.GetTranslation().IsNearlyZero())
+	{
+		if (USkeletalMeshComponent* Mesh = OwnerAdapter->GetMesh())
+		{
+			// Convert local-space warped delta to world-space
+			const FVector WorldDelta = Mesh->ConvertLocalRootMotionToWorld(FTransform(FinalRootMotion.GetTranslation())).GetTranslation();
+
+			if (!WorldDelta.IsNearlyZero())
+			{
+				const FVector CurrentFeetLocation = OwnerAdapter->GetVisualRootLocation();
+				const FVector DesiredFeetLocation = CurrentFeetLocation + WorldDelta;
+
+				FHitResult HitResult;
+				if (!OwnerAdapter->SweepTestMovePathShrunk(CurrentFeetLocation, DesiredFeetLocation, CollisionClampShrinkFactor, HitResult))
+				{
+					// Clamp: scale the local-space translation by the hit fraction
+					// Use a small pullback (1cm) to avoid ending exactly at the surface
+					const float ClampedFraction = FMath::Max(HitResult.Time - 0.01f, 0.f);
+					FinalRootMotion.SetTranslation(FinalRootMotion.GetTranslation() * ClampedFraction);
+
+					UE_LOG(LogTraversalMotionWarp, Verbose,
+						TEXT("MotionWarping: Warped motion clamped by collision with %s at %.1f%% of delta"),
+						*GetNameSafe(HitResult.GetActor()), HitResult.Time * 100.f);
+				}
+			}
+		}
+	}
+
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	const int32 DebugLevel = FTraversalMotionWarpCVars::CVarMotionWarpingDebug.GetValueOnGameThread();
 	if (DebugLevel >= 2 && OwnerAdapter)

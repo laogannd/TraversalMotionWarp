@@ -9,8 +9,30 @@
 #include "TraversalMotionWarpAdapter.h"
 #include "DrawDebugHelpers.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
+#include "Serialization/CustomVersion.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TraversalRootMotionModifier)
+
+// Custom version for TraversalMotionWarp plugin serialization
+struct FTraversalMotionWarpCustomVersion
+{
+	enum Type
+	{
+		BeforeCustomVersionWasAdded = 0,
+		AddedValidateWarpPath,
+		// -----<new versions can be added above this line>-----
+		VersionPlusOne,
+		LatestVersion = VersionPlusOne - 1
+	};
+
+	static const FGuid GUID;
+};
+
+const FGuid FTraversalMotionWarpCustomVersion::GUID(0x0FCF04E2, 0x8EE4440C, 0xB896A625, 0x8A662B22);
+FCustomVersionRegistration GRegisterTraversalMotionWarpCustomVersion(
+	FTraversalMotionWarpCustomVersion::GUID,
+	FTraversalMotionWarpCustomVersion::LatestVersion,
+	TEXT("TraversalMotionWarpVer"));
 
 // FTraversalMotionWarpTarget
 ///////////////////////////////////////////////////////////////
@@ -84,7 +106,17 @@ void UTraversalRootMotionModifier_Warp::Serialize(FArchive& Ar)
 			AddTranslationEasingFunc = EAlphaBlendOption::Linear;
 		}
 	}
-	
+
+	// Handle bValidateWarpPath default for assets saved before this property existed
+	Ar.UsingCustomVersion(FTraversalMotionWarpCustomVersion::GUID);
+	if (Ar.IsLoading())
+	{
+		if (Ar.CustomVer(FTraversalMotionWarpCustomVersion::GUID) < FTraversalMotionWarpCustomVersion::AddedValidateWarpPath)
+		{
+			bValidateWarpPath = true;
+		}
+	}
+
 	Super::Serialize(Ar);
 }
 
@@ -419,6 +451,28 @@ void UTraversalRootMotionModifier_Warp::Update(const FTraversalMotionWarpUpdateC
 
 			OnTargetTransformChanged();
 		}
+
+		// Deferred warp path validation: if the initial validation ran without a target,
+		// re-validate now that we have one
+		if (bValidateWarpPath && !bWarpPathValidated)
+		{
+			if (!ValidateWarpPath())
+			{
+				SetState(ETraversalRootMotionModifierState::Disabled);
+				return;
+			}
+		}
+
+		// Continuous validation: re-check path every frame while active
+		if (bValidateWarpPath && bContinuousWarpPathValidation && bWarpPathValidated)
+		{
+			bWarpPathValidated = false;
+			if (!ValidateWarpPath())
+			{
+				SetState(ETraversalRootMotionModifierState::Disabled);
+				return;
+			}
+		}
 	}
 }
 
@@ -436,6 +490,13 @@ void UTraversalRootMotionModifier_Warp::OnTargetTransformChanged()
 
 void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModifierState LastState)
 {
+	// Reset validation tracking when entering a new state
+	if (GetState() == ETraversalRootMotionModifierState::Active ||
+		GetState() == ETraversalRootMotionModifierState::Waiting)
+	{
+		bWarpPathValidated = false;
+	}
+
 	// When transitioning Waiting → Active with pre-warp alignment enabled,
 	// intercept and go to PreAligning first
 	if (bEnablePreWarpAlignment &&
@@ -459,13 +520,20 @@ void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModif
 		}
 
 		// Otherwise (instant teleport or no movement needed), we're still Active.
-		// Fall through to capture StartTransform normally.
+		// Fall through — collision validation below will catch wall issues.
 	}
 
 	// When transitioning PreAligning → Active, capture StartTransform normally
 	if (LastState == ETraversalRootMotionModifierState::PreAligning &&
 		GetState() == ETraversalRootMotionModifierState::Active)
 	{
+		// Validate warp path before committing to Active
+		if (bValidateWarpPath && !ValidateWarpPath())
+		{
+			SetState(ETraversalRootMotionModifierState::Disabled);
+			return;
+		}
+
 		// Character is now at the correct position — let Super capture StartTransform
 		// Pass Waiting as LastState so the base class treats this as a fresh activation
 		Super::OnStateChanged(ETraversalRootMotionModifierState::Waiting);
@@ -475,6 +543,46 @@ void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModif
 			RootMotionRemainingAfterNotify = UTraversalMotionWarpUtilities::ExtractRootMotionFromAnimation(Animation.Get(), EndTime, Animation.Get()->GetPlayLength());
 		}
 		return;
+	}
+
+	// Validate warp path when entering Active from any other state (Waiting → Active without pre-alignment)
+	if (LastState != ETraversalRootMotionModifierState::Active &&
+		GetState() == ETraversalRootMotionModifierState::Active)
+	{
+		// Check minimum warp distance
+		if (MinWarpDistance > 0.f)
+		{
+			const UTraversalMotionWarpComponent* OwnerComp = GetOwnerComponent();
+			const UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter();
+			if (OwnerComp && OwnerAdapter)
+			{
+				const FTraversalMotionWarpTarget* WarpTargetPtr = OwnerComp->FindWarpTarget(WarpTargetName);
+				if (WarpTargetPtr)
+				{
+					const FVector CurrentLocation = OwnerAdapter->GetVisualRootLocation();
+					const FVector TargetLocation = WarpTargetPtr->GetTargetTrasform().GetLocation();
+					const float Distance = FVector::Dist(CurrentLocation, TargetLocation);
+
+					if (Distance < MinWarpDistance)
+					{
+						UE_LOG(LogTraversalMotionWarp, Warning,
+							TEXT("MotionWarping: Distance to target (%.1f) is below MinWarpDistance (%.1f). Disabling warp. Animation: %s WarpTarget: %s"),
+							Distance, MinWarpDistance, *GetNameSafe(Animation.Get()), *WarpTargetName.ToString());
+						SetState(ETraversalRootMotionModifierState::Disabled);
+						return;
+					}
+				}
+			}
+		}
+
+		if (bValidateWarpPath)
+		{
+			if (!ValidateWarpPath())
+			{
+				SetState(ETraversalRootMotionModifierState::Disabled);
+				return;
+			}
+		}
 	}
 
 	Super::OnStateChanged(LastState);
@@ -609,6 +717,61 @@ bool UTraversalRootMotionModifier_Warp::UpdatePreWarpAlignment(float DeltaSecond
 
 	// Check if alignment is complete
 	return Alpha >= 1.0f;
+}
+
+bool UTraversalRootMotionModifier_Warp::ValidateWarpPath()
+{
+	const UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter();
+	const UTraversalMotionWarpComponent* OwnerComp = GetOwnerComponent();
+	if (!OwnerAdapter || !OwnerComp)
+	{
+		return false;
+	}
+
+	const FTraversalMotionWarpTarget* WarpTargetPtr = OwnerComp->FindWarpTarget(WarpTargetName);
+	if (!WarpTargetPtr)
+	{
+		// No target yet — allow activation but don't mark as validated.
+		// Deferred validation in Update() will re-check once the target appears.
+		return true;
+	}
+
+	const FVector CurrentFeetLocation = OwnerAdapter->GetVisualRootLocation();
+	const FVector TargetLocation = WarpTargetPtr->GetTargetTrasform().GetLocation();
+
+	// Always sweep the full 3D path. bIgnoreZAxis controls whether the warping algorithm
+	// adjusts Z, not whether we detect obstacles — the sweep should be conservative.
+
+	FHitResult HitResult;
+	const bool bPathClear = OwnerAdapter->SweepTestMovePath(CurrentFeetLocation, TargetLocation, HitResult);
+
+	if (!bPathClear)
+	{
+		UE_LOG(LogTraversalMotionWarp, Warning,
+			TEXT("MotionWarping: Warp path blocked by %s at %s (%.1f%% along path). Cancelling warp. Animation: %s WarpTarget: %s"),
+			*GetNameSafe(HitResult.GetActor()),
+			*HitResult.ImpactPoint.ToString(),
+			HitResult.Time * 100.f,
+			*GetNameSafe(Animation.Get()),
+			*WarpTargetName.ToString());
+	}
+	else
+	{
+		// Path sweep passed — now check if the target location itself is inside geometry
+		if (!OwnerAdapter->OverlapTestAtLocation(TargetLocation))
+		{
+			UE_LOG(LogTraversalMotionWarp, Warning,
+				TEXT("MotionWarping: Warp target location overlaps blocking geometry. Cancelling warp. Animation: %s WarpTarget: %s TargetLocation: %s"),
+				*GetNameSafe(Animation.Get()),
+				*WarpTargetName.ToString(),
+				*TargetLocation.ToString());
+			return false;
+		}
+
+		bWarpPathValidated = true;
+	}
+
+	return bPathClear;
 }
 
 FQuat UTraversalRootMotionModifier_Warp::GetTargetRotation() const

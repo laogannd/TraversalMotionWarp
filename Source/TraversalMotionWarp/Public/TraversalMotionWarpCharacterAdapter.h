@@ -27,6 +27,12 @@ public:
 
 	UE_API virtual bool TeleportTo(const FVector& NewFeetLocation, const FQuat& NewRotation, bool bSweep = false) override;
 
+	UE_API virtual bool SweepTestMovePath(const FVector& StartFeetLocation, const FVector& EndFeetLocation, FHitResult& OutHit) const override;
+
+	UE_API virtual bool SweepTestMovePathShrunk(const FVector& StartFeetLocation, const FVector& EndFeetLocation, float ShrinkFactor, FHitResult& OutHit) const override;
+
+	UE_API virtual bool OverlapTestAtLocation(const FVector& FeetLocation) const override;
+
 private:
 	// Triggered when the character says it's time to pre-process local root motion. This adapter catches the request and passes along to the Warping component
 	FTransform WarpLocalRootMotionOnCharacter(const FTransform& LocalRootMotionTransform, UCharacterMovementComponent* TargetMoveComp, float DeltaSeconds);
