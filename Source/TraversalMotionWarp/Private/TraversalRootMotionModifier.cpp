@@ -144,11 +144,13 @@ FTransform FTraversalMotionWarpTarget::GetTargetTrasform() const
 /*	Because vector from target to owner changes during warping, offset needs to be cached. */
 void FTraversalMotionWarpTarget::CacheOffset(const FTransform& InTransform)
 {
-	// Forward offset doesn't need to be cached if it's the only one used. Otherwise, cache it too.
+	// Cache the forward component only when we also have right/up offsets, because the forward
+	// direction (owner→target) changes every frame during warping — it must be frozen at the
+	// moment the target is registered so all three axes stay consistent.
 	bCacheForwardOffset =
 		LocationOffsetDirection == ETraversalWarpTargetLocationOffsetDirection::VectorFromTargetToOwner &&
-			LocationOffset.X > SMALL_NUMBER &&
-				(LocationOffset.Y > SMALL_NUMBER || LocationOffset.Z > SMALL_NUMBER);
+			!FMath::IsNearlyZero(LocationOffset.X) &&
+				(!FMath::IsNearlyZero(LocationOffset.Y) || !FMath::IsNearlyZero(LocationOffset.Z));
 	
 	if (LocationOffsetDirection == ETraversalWarpTargetLocationOffsetDirection::VectorFromTargetToOwner)
 	{
@@ -183,7 +185,7 @@ void FTraversalMotionWarpTarget::RecalculateOffset(FTransform& InTransform) cons
 			break;
 			
 		case ETraversalWarpTargetLocationOffsetDirection::VectorFromTargetToOwner:
-			if (AvatarActor.IsValid())
+			if (AvatarActor.IsValid() && Component.IsValid())
 			{
 				if (bCacheForwardOffset)
 				{
@@ -193,18 +195,21 @@ void FTraversalMotionWarpTarget::RecalculateOffset(FTransform& InTransform) cons
 				{
 					const FVector ContextVector = (AvatarActor->GetActorLocation() - InTransform.GetLocation()).GetSafeNormal();
 					const FVector ForwardOffset = (ContextVector * LocationOffset.X);
-					
+
 					Offset = Component->GetComponentTransform().Inverse().TransformVector(ForwardOffset + CachedUpOffset + CachedRightOffset);
 				}
 			}
 			else
 			{
-				UE_LOG(LogTraversalMotionWarp, Warning, TEXT("Motion warping offset is set to VectorFromOwnerToTarget but avator actor is invalid"))
+				UE_LOG(LogTraversalMotionWarp, Warning, TEXT("Motion warping offset is set to VectorFromOwnerToTarget but avatar actor or component is invalid"))
 			}
 			break;
-			
+
 		case ETraversalWarpTargetLocationOffsetDirection::WorldSpace:
-			Offset = Component->GetComponentTransform().Inverse().TransformVector(LocationOffset);
+			if (Component.IsValid())
+			{
+				Offset = Component->GetComponentTransform().Inverse().TransformVector(LocationOffset);
+			}
 			break;
 			
 		default:
@@ -372,6 +377,14 @@ void UTraversalRootMotionModifier_Warp::Update(const FTraversalMotionWarpUpdateC
 		CurrentPosition = Context.CurrentPosition;
 		Weight = Context.Weight;
 		PlayRate = Context.PlayRate;
+
+		// Cancel if animation changed or became invalid while we were aligning
+		if (!Context.Animation.IsValid() || Context.Animation.Get() != Animation)
+		{
+			UE_LOG(LogTraversalMotionWarp, Verbose, TEXT("MotionWarping: PreAligning cancelled — animation changed."));
+			SetState(ETraversalRootMotionModifierState::MarkedForRemoval);
+			return;
+		}
 
 		// Cancel if animation passed the warp window while we were aligning
 		if (PreviousPosition >= EndTime)
@@ -847,10 +860,16 @@ FQuat UTraversalRootMotionModifier_Warp::WarpRotation(const FTransform& RootMoti
 		// To avoid cases like 170 & -170 resulting in -1 scale factor rather than 1.11.
 		const double YawScale = FMath::IsNearlyZero(TotalRotator.Yaw) ? 0.0 : (TotalRotator.Yaw + YawDiff) / TotalRotator.Yaw;
 		const double PitchScale = FMath::IsNearlyZero(TotalRotator.Pitch) ? 0.0 : (TotalRotator.Pitch + PitchDiff) / TotalRotator.Pitch;
-		const float MaxRotation = WarpMaxRotationRate * DeltaSeconds;
 		FRotator ScaledDeltaRotation(RootMotionDelta.GetRotation());
-		ScaledDeltaRotation.Yaw = FMath::Clamp(ScaledDeltaRotation.Yaw * YawScale, -MaxRotation, MaxRotation);
-		ScaledDeltaRotation.Pitch = FMath::Clamp(ScaledDeltaRotation.Pitch * PitchScale, -MaxRotation, MaxRotation);
+		ScaledDeltaRotation.Yaw *= YawScale;
+		ScaledDeltaRotation.Pitch *= PitchScale;
+		// Only clamp when a max rate is actually configured (0 means unclamped).
+		if (WarpMaxRotationRate > 0.f)
+		{
+			const float MaxRotation = WarpMaxRotationRate * DeltaSeconds;
+			ScaledDeltaRotation.Yaw = FMath::Clamp(ScaledDeltaRotation.Yaw, -MaxRotation, MaxRotation);
+			ScaledDeltaRotation.Pitch = FMath::Clamp(ScaledDeltaRotation.Pitch, -MaxRotation, MaxRotation);
+		}
 		return ScaledDeltaRotation.Quaternion();
 	}
 

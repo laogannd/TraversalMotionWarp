@@ -104,7 +104,7 @@ public:
 
 	/** Whether to look inside animations within montage when looking for warping windows */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config")
-	bool bSearchForWindowsInAnimsWithinMontages;
+	bool bSearchForWindowsInAnimsWithinMontages = false;
 
 	/** Whether to sweep-test the warped root motion delta each frame and clamp it on collision.
 	 *  This prevents the character from being pushed through thin walls or geometry by warped motion.
@@ -125,7 +125,7 @@ public:
 	UE_API UTraversalMotionWarpComponent(const FObjectInitializer& ObjectInitializer);
 
 	UE_API virtual void InitializeComponent() override;
-	UE_API virtual void GetLifetimeReplicatedProps(TArray< FLifetimeProperty >& OutLifetimeProps) const;
+	UE_API virtual void GetLifetimeReplicatedProps(TArray< FLifetimeProperty >& OutLifetimeProps) const override;
 
 	/** Set a new adapter of a particular type */
 	UE_API UTraversalMotionWarpBaseAdapter* CreateOwnerAdapter(TSubclassOf<UTraversalMotionWarpBaseAdapter> AdapterClass);

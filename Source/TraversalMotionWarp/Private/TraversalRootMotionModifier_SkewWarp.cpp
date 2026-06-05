@@ -52,6 +52,8 @@ FVector UTraversalRootMotionModifier_SkewWarp::WarpTranslation(const FTransform&
 		float YDot = FMath::Abs(FVector::DotProduct(ToRootNormalized, CurrentRotation.GetAxisY()));
 		if (YDot > BestMatchDot)
 		{
+			// ToRoot aligns most with Y; Z is a valid (perpendicular) up-hint for MakeFromXZ.
+			// Using Y here would make forward parallel to the up-hint and degenerate the basis.
 			ToRootSyncSpace = FRotationMatrix::MakeFromXZ(ToRootNormalized, CurrentRotation.GetAxisZ());
 		}
 
@@ -121,7 +123,7 @@ FVector UTraversalRootMotionModifier_SkewWarp::WarpTranslation(const FTransform&
 		{
 			// Figure out ratio between remaining Root and remaining World. Then project scaled length of current Root onto World.
 			const float Scale = CurrentToWorldSync.Size() / CurrentToRootMotionSync.Size();
-			const float StepTowardTarget = RootMotionInSyncSpace.ProjectOnTo(RootMotionInSyncSpace).Size();
+			const float StepTowardTarget = RootMotionInSyncSpace.ProjectOnTo(CurrentToRootMotionSyncNorm).Size();
 			SkewedRootMotion = CurrentToWorldSyncNorm * (Scale * StepTowardTarget);
 		}
 

@@ -367,7 +367,6 @@ FTransform UTraversalRootMotionModifier_PrecomputedWarp::ProcessRootMotion(const
 				// when some time has elapsed past the target alignment time, play out regular root motion after the final aligned transform for that extra amount of time.
 				float PostAlignmentTime = (Frame - (WarpedTrajectory.Num() - 1)) * SamplingFrameTime;
 				FTransform PostAlignmentRootMotion = ExtractRootMotionHelper(AnimationAsset, RoundedEndTime, PostAlignmentTime, false);
-				GetTransformForFrame(Frame, WarpedTrajectory, WorldTransform);
 				WorldTransform = PostAlignmentRootMotion * WarpedTrajectory.Last();
 			}
 			else

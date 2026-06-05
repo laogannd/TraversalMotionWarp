@@ -161,8 +161,9 @@ bool UTraversalMotionWarpCharacterAdapter::SweepTestMovePathShrunk(const FVector
 	const float Radius = Capsule->GetScaledCapsuleRadius() * Scale;
 	const FQuat ActorQuat = RawTargetCharacter->GetActorQuat();
 
-	const FVector StartCenter = StartFeetLocation + ActorQuat.GetUpVector() * Capsule->GetScaledCapsuleHalfHeight();
-	const FVector EndCenter = EndFeetLocation + ActorQuat.GetUpVector() * Capsule->GetScaledCapsuleHalfHeight();
+	// Use the shrunk half-height to compute the capsule center so it stays anchored to the feet
+	const FVector StartCenter = StartFeetLocation + ActorQuat.GetUpVector() * HalfHeight;
+	const FVector EndCenter = EndFeetLocation + ActorQuat.GetUpVector() * HalfHeight;
 
 	const FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
 	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WarpPathSweepShrunk), false, RawTargetCharacter);

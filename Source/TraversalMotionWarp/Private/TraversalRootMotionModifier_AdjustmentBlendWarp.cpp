@@ -37,7 +37,13 @@ void UTraversalRootMotionModifier_AdjustmentBlendWarp::ExtractBoneTransformAtTim
 
 	const int32 TotalFrames = FMath::Max(Result.AnimationTracks[TrackIndex].PosKeys.Num(), Result.AnimationTracks[TrackIndex].RotKeys.Num());
 	const float TrackLength = (EndTime - ActualStartTime);
-	const float TimePercent = (Time - ActualStartTime) / (EndTime - ActualStartTime);
+	if (FMath::IsNearlyZero(TrackLength))
+	{
+		// Zero-duration window — sample the first frame to avoid a divide-by-zero in the remap.
+		ExtractBoneTransformAtFrame(OutTransform, TrackIndex, 0);
+		return;
+	}
+	const float TimePercent = (Time - ActualStartTime) / TrackLength;
 	const float RemappedTime = TimePercent * TrackLength;
 	FAnimationUtils::ExtractTransformFromTrack(Result.AnimationTracks[TrackIndex], static_cast<double>(RemappedTime), TotalFrames, TrackLength, EAnimInterpolationType::Linear, OutTransform);
 }

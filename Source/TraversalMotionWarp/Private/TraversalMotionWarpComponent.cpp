@@ -342,9 +342,14 @@ int32 UTraversalMotionWarpComponent::AddModifier(UTraversalRootMotionModifier* M
 {
 	if (ensureAlways(Modifier))
 	{
-		UE_LOG(LogTraversalMotionWarp, Verbose, TEXT("MotionWarping: RootMotionModifier added. NetMode: %d WorldTime: %f Char: %s Animation: %s [%f %f] [%f %f] Loc: %s Rot: %s"),
-			GetWorld()->GetNetMode(), GetWorld()->GetTimeSeconds(), *GetNameSafe(GetOwner()), *GetNameSafe(Modifier->Animation.Get()), Modifier->StartTime, Modifier->EndTime, Modifier->PreviousPosition, Modifier->CurrentPosition,
-			*GetOwner()->GetActorLocation().ToString(), *GetOwner()->GetActorRotation().ToCompactString());
+		UWorld* World = GetWorld();
+		AActor* Owner = GetOwner();
+		if (World && Owner)
+		{
+			UE_LOG(LogTraversalMotionWarp, Verbose, TEXT("MotionWarping: RootMotionModifier added. NetMode: %d WorldTime: %f Char: %s Animation: %s [%f %f] [%f %f] Loc: %s Rot: %s"),
+				World->GetNetMode(), World->GetTimeSeconds(), *GetNameSafe(Owner), *GetNameSafe(Modifier->Animation.Get()), Modifier->StartTime, Modifier->EndTime, Modifier->PreviousPosition, Modifier->CurrentPosition,
+				*Owner->GetActorLocation().ToString(), *Owner->GetActorRotation().ToCompactString());
+		}
 
 		return Modifiers.Add(Modifier);
 	}
@@ -378,6 +383,11 @@ void UTraversalMotionWarpComponent::UpdateSwitchOffConditions()
 		{
 			continue;
 		}
+
+		// Refresh the cached target pointer before checking. WarpTargets is a TArray that can
+		// reallocate (Add) or shuffle (RemoveAtSwap) between frames, leaving any previously cached
+		// &WarpTargets[Idx] dangling. Re-binding here keeps the pointer valid for this frame's checks.
+		SwitchOffConditionData->SetMotionWarpingTarget(&WarpTargets[i]);
 
 		bool bClearCondition = false;
 		bool bPauseWarping = false;
@@ -610,8 +620,8 @@ FTransform UTraversalMotionWarpComponent::ProcessRootMotionPreConvertToWorld(con
 				WarpedRootMotionAccum = ActorFeetLocation;
 			}
 			
-			OriginalRootMotionAccum = OriginalRootMotionAccum.GetValue() + (OwnerAdapter->GetMesh()->ConvertLocalRootMotionToWorld(FTransform(InRootMotion.GetLocation()))).GetLocation();
-			WarpedRootMotionAccum = WarpedRootMotionAccum.GetValue() + (OwnerAdapter->GetMesh()->ConvertLocalRootMotionToWorld(FTransform(FinalRootMotion.GetLocation()))).GetLocation();
+			OriginalRootMotionAccum = OriginalRootMotionAccum.GetValue() + (OwnerAdapter->GetMesh()->ConvertLocalRootMotionToWorld(FTransform(InRootMotion.GetTranslation()))).GetTranslation();
+			WarpedRootMotionAccum = WarpedRootMotionAccum.GetValue() + (OwnerAdapter->GetMesh()->ConvertLocalRootMotionToWorld(FTransform(FinalRootMotion.GetTranslation()))).GetTranslation();
 
 			DrawDebugPoint(GetWorld(), OriginalRootMotionAccum.GetValue(), PointSize, FColor::Red, false, DrawDebugDuration, 0);
 			DrawDebugPoint(GetWorld(), WarpedRootMotionAccum.GetValue(), PointSize, FColor::Green, false, DrawDebugDuration, 0);
@@ -756,7 +766,12 @@ int32 UTraversalMotionWarpComponent::RemoveWarpTargets(const TArray<FName>& Warp
 	int32 NumRemoved = 0;
 	for (const FName& WarpTargetName : WarpTargetNames)
 	{
-		NumRemoved += RemoveWarpTarget(WarpTargetName);		
+		const int32 Removed = WarpTargets.RemoveAll([&WarpTargetName](const FTraversalMotionWarpTarget& WarpTarget) { return WarpTarget.Name == WarpTargetName; });
+		if (Removed > 0)
+		{
+			RemoveSwitchOffConditions(WarpTargetName);
+			NumRemoved += Removed;
+		}
 	}
 
 	if (NumRemoved > 0)

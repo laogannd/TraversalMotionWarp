@@ -34,7 +34,7 @@ FVector UTraversalMotionWarpSwitchOffCondition::GetTargetLocation() const
 			"otherwise switch off condition will use target actor location."))
 	}
 
-	return TargetActor->GetActorLocation();
+	return IsValid(TargetActor) ? TargetActor->GetActorLocation() : FVector::ZeroVector;
 }
 
 FRotator UTraversalMotionWarpSwitchOffCondition::GetTargetRotation() const
@@ -51,7 +51,7 @@ FRotator UTraversalMotionWarpSwitchOffCondition::GetTargetRotation() const
 			"otherwise switch off condition will use target actor rotation."))
 	}
 
-	return TargetActor->GetActorRotation();
+	return IsValid(TargetActor) ? TargetActor->GetActorRotation() : FRotator::ZeroRotator;
 }
 
 void UTraversalMotionWarpSwitchOffCondition::SetWarpTargetForDestination(const FTraversalMotionWarpTarget* InMotionWarpingTarget)
