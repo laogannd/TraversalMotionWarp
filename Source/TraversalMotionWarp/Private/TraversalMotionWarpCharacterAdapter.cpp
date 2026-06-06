@@ -220,6 +220,96 @@ bool UTraversalMotionWarpCharacterAdapter::OverlapTestAtLocation(const FVector& 
 	return !bOverlap;
 }
 
+bool UTraversalMotionWarpCharacterAdapter::IsAirborne() const
+{
+	if (const ACharacter* RawTargetCharacter = TargetCharacter.Get())
+	{
+		if (const UCharacterMovementComponent* CharacterMovement = RawTargetCharacter->GetCharacterMovement())
+		{
+			return CharacterMovement->IsFalling();
+		}
+	}
+	return false;
+}
+
+bool UTraversalMotionWarpCharacterAdapter::IsReplayingMoves() const
+{
+	const ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	return RawTargetCharacter && RawTargetCharacter->bClientUpdating;
+}
+
+FTraversalWarpMovementState UTraversalMotionWarpCharacterAdapter::BeginWarpMovementControl(bool bControlVertical)
+{
+	// Nothing to suspend (grounded warp, or the air-warp flag is off) — return an invalid state and stay
+	// out of the ref count entirely. This keeps a non-suspending warp from "claiming" control first and
+	// blocking an overlapping airborne warp from actually suspending movement.
+	if (!bControlVertical)
+	{
+		return FTraversalWarpMovementState();
+	}
+
+	ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	UCharacterMovementComponent* CharacterMovement = RawTargetCharacter ? RawTargetCharacter->GetCharacterMovement() : nullptr;
+	if (!CharacterMovement)
+	{
+		return FTraversalWarpMovementState();
+	}
+
+	// First warp to take control captures the original state and applies the suspension.
+	// Subsequent (overlapping) warps just share the already-captured state.
+	if (WarpMovementControlRefCount == 0)
+	{
+		OriginalState = FTraversalWarpMovementState();
+		OriginalState.bValid = true;
+		OriginalState.bWasAirborne = CharacterMovement->IsFalling();
+		OriginalState.PrevMovementMode = static_cast<uint8>(CharacterMovement->MovementMode.GetValue());
+		OriginalState.PrevCustomMode = CharacterMovement->CustomMovementMode;
+		OriginalState.PrevGravityScale = CharacterMovement->GravityScale;
+		OriginalState.PrevVelocity = CharacterMovement->Velocity;
+
+		// Zero velocity and clear any pending launch/acceleration so a queued LaunchCharacter
+		// can't fire when we restore the movement mode at warp end.
+		CharacterMovement->StopMovementImmediately();
+		CharacterMovement->SetMovementMode(MOVE_Flying);
+		// Defensive: even if something bumps us back to Falling mid-warp, gravity stays off.
+		CharacterMovement->GravityScale = 0.f;
+	}
+
+	++WarpMovementControlRefCount;
+	return OriginalState;
+}
+
+void UTraversalMotionWarpCharacterAdapter::EndWarpMovementControl(const FTraversalWarpMovementState& CapturedState, bool bResumeFalling)
+{
+	if (WarpMovementControlRefCount <= 0)
+	{
+		return;
+	}
+
+	// Only the last release restores movement.
+	if (--WarpMovementControlRefCount > 0)
+	{
+		return;
+	}
+
+	ACharacter* RawTargetCharacter = TargetCharacter.Get();
+	UCharacterMovementComponent* CharacterMovement = RawTargetCharacter ? RawTargetCharacter->GetCharacterMovement() : nullptr;
+
+	if (CharacterMovement && OriginalState.bValid)
+	{
+		CharacterMovement->GravityScale = OriginalState.PrevGravityScale;
+
+		// Let the engine re-resolve from here. On normal completion (bResumeFalling == false) the
+		// character is on/at the platform, so Walking lets FindFloor settle it (auto-falls if no floor).
+		// On cancellation mid-air (bResumeFalling == true) drop back into Falling so they fall naturally.
+		// We deliberately do NOT restore PrevVelocity — that is the stale pre-warp falling velocity and
+		// would cause a visible downward snap. The warp left velocity near zero; CMC re-accumulates next tick.
+		CharacterMovement->SetMovementMode(bResumeFalling ? MOVE_Falling : MOVE_Walking);
+	}
+
+	OriginalState = FTraversalWarpMovementState();
+}
+
 FTransform UTraversalMotionWarpCharacterAdapter::WarpLocalRootMotionOnCharacter(const FTransform& LocalRootMotionTransform, UCharacterMovementComponent* TargetMoveComp, float DeltaSeconds)
 {
 	const ACharacter* RawTargetCharacter = TargetCharacter.Get();

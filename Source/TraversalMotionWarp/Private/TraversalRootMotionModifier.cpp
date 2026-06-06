@@ -227,6 +227,67 @@ UTraversalRootMotionModifier::UTraversalRootMotionModifier(const FObjectInitiali
 {
 }
 
+void UTraversalRootMotionModifier::BeginDestroy()
+{
+	// Defensive: if this modifier is destroyed while still holding movement control (e.g. component
+	// torn down mid-warp, seamless travel), restore movement so the actor isn't left stuck flying.
+	if (bHasMovementControl)
+	{
+		EndMovementControl(/*bResumeFalling=*/true);
+	}
+
+	Super::BeginDestroy();
+}
+
+void UTraversalRootMotionModifier::TryBeginMovementControl(bool bControlVertical)
+{
+	// Idempotent: only take control once per warp.
+	if (bHasMovementControl)
+	{
+		return;
+	}
+
+	UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter();
+	if (!OwnerAdapter)
+	{
+		return;
+	}
+
+	// Capture airborne-at-activation once. This is a pure read, so we do it even during replay: it keeps
+	// the Z-warp decision (ShouldWarpZAxis) consistent between the authoritative tick and saved-move
+	// replay, including the rare case where a correction rewinds past a completed window and replay
+	// recreates this modifier fresh. Captured once and held stable for the whole window via the guards.
+	bActivatedWhileAirborne = OwnerAdapter->IsAirborne();
+
+	// The actual movement mutation (mode switch / velocity zero) must NOT run during saved-move replay —
+	// the movement state is re-simulated from the saved move and re-issuing it would diverge from the
+	// server. Skip only the mutation here, not the airborne decision above.
+	if (OwnerAdapter->IsReplayingMoves())
+	{
+		return;
+	}
+
+	CapturedMovementState = OwnerAdapter->BeginWarpMovementControl(bControlVertical && bActivatedWhileAirborne);
+	bHasMovementControl = CapturedMovementState.bValid;
+}
+
+void UTraversalRootMotionModifier::EndMovementControl(bool bResumeFalling)
+{
+	if (!bHasMovementControl)
+	{
+		return;
+	}
+
+	if (UTraversalMotionWarpBaseAdapter* OwnerAdapter = GetOwnerAdapter())
+	{
+		OwnerAdapter->EndWarpMovementControl(CapturedMovementState, bResumeFalling);
+	}
+
+	bHasMovementControl = false;
+	bActivatedWhileAirborne = false;
+	CapturedMovementState = FTraversalWarpMovementState();
+}
+
 UTraversalMotionWarpComponent* UTraversalRootMotionModifier::GetOwnerComponent() const
 {
 	return Cast<UTraversalMotionWarpComponent>(GetOuter());
@@ -358,6 +419,12 @@ void UTraversalRootMotionModifier::OnStateChanged(ETraversalRootMotionModifierSt
 		else if (LastState == ETraversalRootMotionModifierState::Active && (State == ETraversalRootMotionModifierState::Disabled || State == ETraversalRootMotionModifierState::MarkedForRemoval))
 		{
 			OnDeactivateDelegate.ExecuteIfBound(OwnerComp, this);
+
+			// Restore any movement control taken for an air-triggered warp. This single point covers
+			// every deactivation path: window end, manual disable, missing target, and path-fail mid-warp.
+			// Disabled = cancelled mid-warp -> resume Falling (drop naturally). MarkedForRemoval = window
+			// finished normally (on/at the platform) -> resume Walking and let the engine re-resolve.
+			EndMovementControl(/*bResumeFalling=*/State == ETraversalRootMotionModifierState::Disabled);
 		}
 	}
 }
@@ -551,6 +618,10 @@ void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModif
 		// Pass Waiting as LastState so the base class treats this as a fresh activation
 		Super::OnStateChanged(ETraversalRootMotionModifierState::Waiting);
 
+		// Warping truly begins now — take movement control (captures airborne-at-activation here, after
+		// any pre-align teleport, so the airborne snapshot reflects the real start of warping).
+		TryBeginMovementControl(bForceFullWarpWhenAirborne);
+
 		if (bSubtractRemainingRootMotion)
 		{
 			RootMotionRemainingAfterNotify = UTraversalMotionWarpUtilities::ExtractRootMotionFromAnimation(Animation.Get(), EndTime, Animation.Get()->GetPlayLength());
@@ -600,6 +671,16 @@ void UTraversalRootMotionModifier_Warp::OnStateChanged(ETraversalRootMotionModif
 
 	Super::OnStateChanged(LastState);
 
+	// Take movement control on activation from any non-Active state (Waiting → Active without
+	// pre-alignment, or the instant/no-move pre-align fall-through). Placed after validation above so a
+	// warp that gets Disabled never suspends movement. Idempotent if a PreAligning → Active path above
+	// already took control before returning.
+	if (LastState != ETraversalRootMotionModifierState::Active &&
+		GetState() == ETraversalRootMotionModifierState::Active)
+	{
+		TryBeginMovementControl(bForceFullWarpWhenAirborne);
+	}
+
 	if (bSubtractRemainingRootMotion && LastState != ETraversalRootMotionModifierState::Active &&
 		GetState() == ETraversalRootMotionModifierState::Active)
 	{
@@ -645,7 +726,12 @@ bool UTraversalRootMotionModifier_Warp::BeginPreWarpAlignment()
 	const FVector CurrentLocation = OwnerAdapter->GetVisualRootLocation();
 
 	FVector Delta = ExpectedStartLocation - CurrentLocation;
-	if (bIgnoreZAxis)
+
+	// Pre-alignment runs before the Active transition, so bActivatedWhileAirborne isn't set yet —
+	// query the adapter directly for this one decision. When the warp wants full control and we're
+	// airborne, keep Z so pre-alignment can lift the capsule toward the expected start height.
+	const bool bAirborneNow = bForceFullWarpWhenAirborne && OwnerAdapter->IsAirborne();
+	if (bIgnoreZAxis && !bAirborneNow)
 	{
 		Delta.Z = 0.f;
 		ExpectedStartLocation.Z = CurrentLocation.Z;

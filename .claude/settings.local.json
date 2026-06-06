@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(find . -maxdepth 4 -name \"*.uproject\")",
+      "Bash(ls \"C:/Program Files/Epic Games\")",
+      "Bash(git --no-pager diff)",
+      "Bash(cd \"C:/Users/23695/.claude/projects/c--Users-23695-Downloads-TraversalMotionWarp/memory\" && if [ -f MEMORY.md ]; then cat MEMORY.md; else echo \"NO_INDEX\"; fi)",
+      "Read(//c/Users/23695/.claude/projects/c--Users-23695-Downloads-TraversalMotionWarp/memory/**)"
     ]
   }
 }

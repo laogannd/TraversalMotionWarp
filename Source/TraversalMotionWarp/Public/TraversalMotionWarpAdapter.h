@@ -41,6 +41,24 @@ public:
 	 *  Returns true if the location is clear (no overlap). */
 	virtual bool OverlapTestAtLocation(const FVector& FeetLocation) const { return true; }
 
+	/** @return true if the actor is currently in an airborne/falling movement state. */
+	virtual bool IsAirborne() const { return false; }
+
+	/** @return true if the actor is currently replaying saved moves (network prediction).
+	 *  Movement-mode/velocity mutations must be skipped during replay to stay deterministic. */
+	virtual bool IsReplayingMoves() const { return false; }
+
+	/** Capture the current movement state and suspend movement for a warp that takes control of
+	 *  vertical motion: zero relevant velocity and disable gravity. When bControlVertical is false,
+	 *  only the snapshot is taken and no movement change is applied. Returns an invalid (no-op) state
+	 *  for adapters that don't model movement. May be called more than once per warp; concrete adapters
+	 *  are expected to reference-count so overlapping warps restore correctly. */
+	virtual FTraversalWarpMovementState BeginWarpMovementControl(bool bControlVertical) { return FTraversalWarpMovementState(); }
+
+	/** Restore movement state captured by BeginWarpMovementControl. bResumeFalling hints whether the
+	 *  actor should drop back into falling (vs. let the movement system re-resolve walking/landing). */
+	virtual void EndWarpMovementControl(const FTraversalWarpMovementState& CapturedState, bool bResumeFalling) {}
+
 	// A MotionWarpingComponent will bind to this delegate to perform warping when it is triggered
 	FTraversalOnWarpLocalspaceRootMotionWithContext WarpLocalRootMotionDelegate;
 };

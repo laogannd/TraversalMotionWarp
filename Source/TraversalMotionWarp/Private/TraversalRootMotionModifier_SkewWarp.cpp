@@ -182,7 +182,8 @@ FTransform UTraversalRootMotionModifier_SkewWarp::ProcessRootMotion(const FTrans
 		const FVector TotalTranslation = RootMotionTotal.GetLocation();
 
 		FVector TargetLocation = GetTargetLocation();
-		if (bIgnoreZAxis)
+		const bool bKeepZ = bIgnoreZAxis && !ShouldWarpZAxis();
+		if (bKeepZ)
 		{
 			TargetLocation.Z = CurrentLocation.Z;
 		}
@@ -198,13 +199,14 @@ FTransform UTraversalRootMotionModifier_SkewWarp::ProcessRootMotion(const FTrans
 				FVector WarpedTranslation = WarpTranslation(FTransform::Identity, DeltaTranslation, TotalTranslation, TargetLocation) + ExtraRootMotion.GetLocation();
 				if (MaxSpeedClampRatio > 0.0f)
 				{
-					if (bIgnoreZAxis)
+					if (bKeepZ)
 					{
 						const float AnimationSpeed = DeltaTranslation.Size2D();
 						WarpedTranslation = WarpedTranslation.GetClampedToMaxSize2D(AnimationSpeed * MaxSpeedClampRatio);
 					}
 					else
 					{
+						// Full-3D clamp so an airborne warp's vertical correction isn't clipped away.
 						const float AnimationSpeed = DeltaTranslation.Size();
 						WarpedTranslation = WarpedTranslation.GetClampedToMaxSize(AnimationSpeed * MaxSpeedClampRatio);
 					}
@@ -226,7 +228,7 @@ FTransform UTraversalRootMotionModifier_SkewWarp::ProcessRootMotion(const FTrans
 				Alpha = FAlphaBlend::AlphaToBlendOption(Alpha, AddTranslationEasingFunc, AddTranslationEasingCurve);
 
 				FVector NextLocation = FMath::Lerp<FVector, float>(StartTransform.GetLocation(), TargetLocation, Alpha);
-				if (bIgnoreZAxis)
+				if (bKeepZ)
 				{
 					NextLocation.Z = CurrentLocation.Z;
 				}

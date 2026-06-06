@@ -170,7 +170,7 @@ void UTraversalRootMotionModifier_AdjustmentBlendWarp::PrecomputeWarpedTracks()
 	{
 		RootTotalAdditiveTranslation = RootTargetLocation - CachedRootMotion.GetLocation();
 
-		if (bIgnoreZAxis)
+		if (bIgnoreZAxis && !ShouldWarpZAxis())
 		{
 			RootTotalAdditiveTranslation.Z = 0.f;
 		}

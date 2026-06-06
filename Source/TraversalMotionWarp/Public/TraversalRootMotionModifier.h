@@ -65,6 +65,36 @@ enum class ETraversalRootMotionModifierState : uint8
 
 DECLARE_DYNAMIC_DELEGATE_TwoParams(FOnTraversalRootMotionModifierDelegate, UTraversalMotionWarpComponent*, MotionWarpingComp, UTraversalRootMotionModifier*, RootMotionModifier);
 
+/**
+ * Opaque snapshot of an actor's movement state captured when an air-triggered warp suspends movement,
+ * used to restore it cleanly on warp end. Fields are interpreted by the concrete adapter (e.g. the
+ * character adapter maps PrevMovementMode to EMovementMode). Kept actor-agnostic: primitives only,
+ * no movement-component types, so this has no dependency on any specific actor kind.
+ */
+USTRUCT()
+struct FTraversalWarpMovementState
+{
+	GENERATED_BODY()
+
+	/** Whether a capture was actually taken (false = no-op / unsupported adapter). */
+	bool bValid = false;
+
+	/** Whether the actor was airborne (e.g. MOVE_Falling) at the moment of capture. */
+	bool bWasAirborne = false;
+
+	/** Previous movement mode (EMovementMode as uint8). */
+	uint8 PrevMovementMode = 0;
+
+	/** Previous custom movement mode. */
+	uint8 PrevCustomMode = 0;
+
+	/** Previous gravity scale. */
+	float PrevGravityScale = 1.f;
+
+	/** Previous velocity. */
+	FVector PrevVelocity = FVector::ZeroVector;
+};
+
 // UTraversalRootMotionModifier
 ///////////////////////////////////////////////////////////////
 
@@ -129,6 +159,10 @@ public:
 
 	UE_API UTraversalRootMotionModifier(const FObjectInitializer& ObjectInitializer);
 
+	//~ Begin UObject interface
+	UE_API virtual void BeginDestroy() override;
+	//~ End UObject interface
+
 	/** Called when the state of the modifier changes */
 	UE_API virtual void OnStateChanged(ETraversalRootMotionModifierState LastState);
 
@@ -156,10 +190,31 @@ public:
 
 	inline const UAnimSequenceBase* GetAnimation() const { return Animation.Get(); }
 
-#if WITH_EDITOR	
+#if WITH_EDITOR
 	virtual void DrawInEditor(class FPrimitiveDrawInterface* PDI, USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* InAnimation, const FAnimNotifyEvent& NotifyEvent) const {}
 	virtual void DrawCanvasInEditor(class FCanvas& Canvas, class FSceneView& View, USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* InAnimation, const FAnimNotifyEvent& NotifyEvent) const {}
-#endif	
+#endif
+
+protected:
+
+	/** Movement state captured while this modifier suspends movement (air-triggered warp). */
+	FTraversalWarpMovementState CapturedMovementState;
+
+	/** True once this modifier has taken movement control. Guards against re-capturing on
+	 *  saved-move replay or repeated state-change callbacks, and tells us whether to restore. */
+	bool bHasMovementControl = false;
+
+	/** Snapshot of "was airborne at activation", captured once when movement control is taken so
+	 *  warp behavior (e.g. Z correction) stays stable for the whole window even if the actor lands. */
+	bool bActivatedWhileAirborne = false;
+
+	/** Take movement control for this warp via the owner adapter (idempotent; skipped during replay).
+	 *  bControlVertical asks the adapter to suspend gravity / zero falling velocity when airborne. */
+	UE_API void TryBeginMovementControl(bool bControlVertical);
+
+	/** Restore movement control previously taken (no-op if none held).
+	 *  bResumeFalling hints the adapter to drop back into falling vs. let the engine re-resolve. */
+	UE_API void EndMovementControl(bool bResumeFalling);
 
 private:
 
@@ -352,6 +407,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config", meta = (EditCondition = "bWarpTranslation"))
 	bool bIgnoreZAxis = true;
 
+	/** When the warp activates while the character is airborne (falling), take full control of vertical
+	 *  motion: warp Z to reach the target/platform height even if bIgnoreZAxis is set, suspend gravity and
+	 *  zero falling velocity for the warp duration. Has no effect when activated on the ground, so existing
+	 *  grounded warps are unchanged. Use this for traversal moves that can be triggered mid-jump (e.g.
+	 *  grabbing a ledge in the air) to stop the character getting stuck floating or clipping into geometry. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config", meta = (EditCondition = "bWarpTranslation"))
+	bool bForceFullWarpWhenAirborne = false;
+
 	/** Whether we warp the actors location or their foot location to the warp target */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Config", meta = (EditCondition = "bWarpTranslation"))
 	bool bWarpToFeetLocation = true;
@@ -454,6 +517,11 @@ public:
 	inline FVector GetTargetLocation() const { return CachedTargetTransform.GetLocation(); }
 	inline FRotator GetTargetRotator() const { return GetTargetRotation().Rotator(); }
 	UE_API FQuat GetTargetRotation() const;
+
+	/** True when this warp should override bIgnoreZAxis and drive Z to the target for this window.
+	 *  Only enabled when the modifier both opts in (bForceFullWarpWhenAirborne) and was airborne at the
+	 *  moment movement control was taken (captured once so behavior stays stable if the actor lands). */
+	inline bool ShouldWarpZAxis() const { return bForceFullWarpWhenAirborne && bActivatedWhileAirborne; }
 
 	UE_API FQuat WarpRotation(const FTransform& RootMotionDelta, const FTransform& RootMotionTotal, float DeltaSeconds);
 

@@ -33,12 +33,28 @@ public:
 
 	UE_API virtual bool OverlapTestAtLocation(const FVector& FeetLocation) const override;
 
+	UE_API virtual bool IsAirborne() const override;
+
+	UE_API virtual bool IsReplayingMoves() const override;
+
+	UE_API virtual FTraversalWarpMovementState BeginWarpMovementControl(bool bControlVertical) override;
+
+	UE_API virtual void EndWarpMovementControl(const FTraversalWarpMovementState& CapturedState, bool bResumeFalling) override;
+
 private:
 	// Triggered when the character says it's time to pre-process local root motion. This adapter catches the request and passes along to the Warping component
 	FTransform WarpLocalRootMotionOnCharacter(const FTransform& LocalRootMotionTransform, UCharacterMovementComponent* TargetMoveComp, float DeltaSeconds);
 
 	/** The associated character */
 	TWeakObjectPtr<ACharacter> TargetCharacter;
+
+	/** Reference count of active warps that have suspended movement. The first BeginWarpMovementControl
+	 *  captures OriginalState and applies the suspension; the last EndWarpMovementControl restores it.
+	 *  This keeps overlapping warps from clobbering each other's captured state. */
+	int32 WarpMovementControlRefCount = 0;
+
+	/** Movement state captured by the first warp that took control, restored by the last to release. */
+	FTraversalWarpMovementState OriginalState;
 };
 
 #undef UE_API
